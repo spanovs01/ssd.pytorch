@@ -28,9 +28,11 @@ def detection_collate(batch):
 
 
 def base_transform(image, size, mean):
+    image = np.array(image)
     x = cv2.resize(image, (size, size)).astype(np.float32)
     x -= mean
     x = x.astype(np.float32)
+    x = x.transpose(2, 0, 1)
     return x
 
 
@@ -40,4 +42,5 @@ class BaseTransform:
         self.mean = np.array(mean, dtype=np.float32)
 
     def __call__(self, image, boxes=None, labels=None):
-        return base_transform(image, self.size, self.mean), boxes, labels
+        # return base_transform(image, self.size, self.mean), boxes, labels
+        return base_transform(image, self.size, self.mean)

@@ -31,7 +31,7 @@ class SSD(nn.Module):
         self.num_classes = num_classes
         self.cfg = (coco, voc)[num_classes == 21]
         self.priorbox = PriorBox(self.cfg)
-        self.priors = Variable(self.priorbox.forward(), volatile=True)
+        # self.priors = Variable(self.priorbox.forward(), volatile=True)
         self.size = size
 
         # SSD network
@@ -45,7 +45,7 @@ class SSD(nn.Module):
 
         if phase == 'test':
             self.softmax = nn.Softmax(dim=-1)
-            self.detect = Detect(num_classes, 0, 200, 0.01, 0.45)
+            # self.detect = Detect(num_classes, 0, 200, 0.01, 0.45)
 
     def forward(self, x):
         """Applies network layers and ops on input image(s) x.
@@ -71,13 +71,20 @@ class SSD(nn.Module):
         conf = list()
 
         # apply vgg up to conv4_3 relu
+        # Do not apply BatchNorm
+        # Apply ReLU after each conv2d
+        # 2*2 + 1 + 2*2 + 1 + 3*2 + 1 + 3*2 = 23
         for k in range(23):
             x = self.vgg[k](x)
 
+        # Apply L2 Norm to conv4_3
+        # s = x / sqrt(sum(x**2)), where x**2 - elementwise
         s = self.L2Norm(x)
         sources.append(s)
 
         # apply vgg up to fc7
+        # Do not apply BatchNorm
+        # Apply ReLU after each conv2d
         for k in range(23, len(self.vgg)):
             x = self.vgg[k](x)
         sources.append(x)
@@ -95,13 +102,17 @@ class SSD(nn.Module):
 
         loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1)
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
+        
+        # TEST
         if self.phase == "test":
-            output = self.detect(
-                loc.view(loc.size(0), -1, 4),                   # loc preds
-                self.softmax(conf.view(conf.size(0), -1,
-                             self.num_classes)),                # conf preds
-                self.priors.type(type(x.data))                  # default boxes
-            )
+            arguments = (self.num_classes, 0, 200, 0.01, 0.45)
+            input = (loc.view(loc.size(0), -1, 4),                   # loc preds
+                    self.softmax(conf.view(conf.size(0), -1,
+                                    self.num_classes)),                # conf preds
+                    self.priorbox.forward().type(type(x.data)))                  # default boxes
+            output = Detect.apply(input, arguments)
+
+        # TRAIN
         else:
             output = (
                 loc.view(loc.size(0), -1, 4),
@@ -145,6 +156,23 @@ def vgg(cfg, i, batch_norm=False):
                nn.ReLU(inplace=True), conv7, nn.ReLU(inplace=True)]
     return layers
 
+'''
+Base Convs:
+    | .. |                  (Conv1_2)
+    | .. |                  (Conv2_2)
+    | .. |                  (Conv3_3)
+    | .. |                  (Conv4_3)       ->      3x3x(4 *  Classes + 4))  
+    | .. |                  (Conv5_3)
+    | 3x3x1024 |            (Conv6)
+    | 1x1x1024 |            (Conv7)         ->      3x3x(6 *  Classes + 4)) 
+
+Extra Convs: 
+    | 1x1x256 3x3x512-s2 |  (Conv8_2)       ->      3x3x(6 *  Classes + 4))
+    | 1x1x128 3x3x256-s2 |  (Conv9_2)       ->      3x3x(6 *  Classes + 4))
+    | 1x1x128 3x3x256-s1 |  (Conv10_2)      ->      3x3x(4 *  Classes + 4))
+    | 1x1x128 3x3x256-s1 |  (Conv11_2)      ->      3x3x(4 *  Classes + 4))
+'''
+
 
 def add_extras(cfg, i, batch_norm=False):
     # Extra layers added to VGG for feature scaling
@@ -166,6 +194,8 @@ def add_extras(cfg, i, batch_norm=False):
 def multibox(vgg, extra_layers, cfg, num_classes):
     loc_layers = []
     conf_layers = []
+    
+    # So, 22 and -1 are relu
     vgg_source = [21, -2]
     for k, v in enumerate(vgg_source):
         loc_layers += [nn.Conv2d(vgg[v].out_channels,
