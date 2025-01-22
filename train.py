@@ -106,7 +106,7 @@ def train():
         print('Resuming training, loading {}...'.format(args.resume))
         ssd_net.load_weights(args.resume)
     else:
-        vgg_weights = torch.load(args.save_folder + args.basenet)
+        vgg_weights = torch.load(args.save_folder + args.basenet, weights_only=True)
         print('Loading base network...')
         ssd_net.vgg.load_state_dict(vgg_weights)
 
@@ -228,7 +228,8 @@ def adjust_learning_rate(optimizer, gamma, step):
 
 
 def xavier(param):
-    init.xavier_uniform(param)
+    # init.xavier_uniform(param)
+    nn.init.xavier_uniform_(param)
 
 
 def weights_init(m):
