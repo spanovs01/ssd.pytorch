@@ -3,6 +3,7 @@ from utils.augmentations import SSDAugmentation
 from layers.modules import MultiBoxLoss
 from ssd import build_ssd
 import os
+import os.path as osp
 import sys
 import time
 import torch
@@ -18,7 +19,6 @@ import argparse
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
-
 
 parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Training With Pytorch')
@@ -67,6 +67,9 @@ else:
 if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
 
+if args.visdom:
+    import visdom
+    viz = visdom.Visdom()
 
 def train():
     if args.dataset == 'COCO':
@@ -88,9 +91,9 @@ def train():
                                transform=SSDAugmentation(cfg['min_dim'],
                                                          MEANS))
 
-    if args.visdom:
-        import visdom
-        viz = visdom.Visdom()
+    # if args.visdom:
+    #     import visdom
+    #     viz = visdom.Visdom()
 
     ssd_net = build_ssd('train', cfg['min_dim'], cfg['num_classes'])
     net = ssd_net
@@ -145,56 +148,70 @@ def train():
     data_loader = data.DataLoader(dataset, args.batch_size,
                                   num_workers=args.num_workers,
                                   shuffle=True, collate_fn=detection_collate,
-                                  pin_memory=True)
+                                  pin_memory=True, generator=torch.Generator(device='cuda'))
     # create batch iterator
     batch_iterator = iter(data_loader)
     for iteration in range(args.start_iter, cfg['max_iter']):
-        if args.visdom and iteration != 0 and (iteration % epoch_size == 0):
-            update_vis_plot(epoch, loc_loss, conf_loss, epoch_plot, None,
-                            'append', epoch_size)
-            # reset epoch loss counters
-            loc_loss = 0
-            conf_loss = 0
-            epoch += 1
+        losses_c = []
+        losses_l = []
+        for images, targets in data_loader:
+            if args.visdom and iteration != 0 and (iteration % epoch_size == 0):
+                update_vis_plot(epoch, loc_loss, conf_loss, epoch_plot, None,
+                                'append', epoch_size)
+                # reset epoch loss counters
+                loc_loss = 0
+                conf_loss = 0
+                epoch += 1
 
-        if iteration in cfg['lr_steps']:
-            step_index += 1
-            adjust_learning_rate(optimizer, args.gamma, step_index)
+            if iteration in cfg['lr_steps']:
+                step_index += 1
+                adjust_learning_rate(optimizer, args.gamma, step_index)
 
-        # load train data
-        images, targets = next(batch_iterator)
+            # load train data
+            # images, targets = next(batch_iterator)
 
-        if args.cuda:
-            images = Variable(images.cuda())
-            targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
-        else:
-            images = Variable(images)
-            targets = [Variable(ann, volatile=True) for ann in targets]
-        # forward
-        t0 = time.time()
-        out = net(images)
-        # backprop
-        optimizer.zero_grad()
-        loss_l, loss_c = criterion(out, targets)
-        loss = loss_l + loss_c
-        loss.backward()
-        optimizer.step()
-        t1 = time.time()
-        loc_loss += loss_l.data[0]
-        conf_loss += loss_c.data[0]
+            if args.cuda:
+                images = Variable(images.cuda())
+                targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
+            else:
+                images = Variable(images)
+                targets = [Variable(ann, volatile=True) for ann in targets]
+            # forward
+            # t0 = time.time()
+            out = net(images)
+            # backprop
+            optimizer.zero_grad()
+            loss_l, loss_c = criterion(out, targets)
+            loss = loss_l + loss_c
+            loss.backward()
+            optimizer.step()
+            # t1 = time.time()
+            # loc_loss += loss_l.data[0]
+            # conf_loss += loss_c.data[0]
+            losses_c.append(loss_c.detach())
+            losses_l.append(loss_l.detach())
+            # loc_loss += loss_l.item()
+            # conf_loss += loss_c.item()
 
-        if iteration % 10 == 0:
-            print('timer: %.4f sec.' % (t1 - t0))
-            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
+        print(losses_c)
+        print(losses_l)
+        # print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
+        # print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.item()), end=' ')
+        mean_loss_c = sum(losses_c) / len(losses_c)
+        mean_loss_l = sum(losses_c) / len(losses_l)
+        print(f"epoch: {iteration} || Localisation Loss: {mean_loss_l} || Clasification Loss: {mean_loss_c}")
 
         if args.visdom:
-            update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
+            # update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
+            #                 iter_plot, epoch_plot, 'append')
+            update_vis_plot(iteration, loss_l.item(), loss_c.item(),
                             iter_plot, epoch_plot, 'append')
 
-        if iteration != 0 and iteration % 5000 == 0:
+            # if iteration != 0 and iteration % 5000 == 0:
+        if iteration != 0 and iteration % 50 == 0:
             print('Saving state, iter:', iteration)
             torch.save(ssd_net.state_dict(), 'weights/ssd300_COCO_' +
-                       repr(iteration) + '.pth')
+                    repr(iteration) + '.pth')
     torch.save(ssd_net.state_dict(),
                args.save_folder + '' + args.dataset + '.pth')
 
