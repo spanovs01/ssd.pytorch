@@ -467,7 +467,9 @@ def test():
     TP_boxes = []
     images_with_TP = []
 
-    for images, targets in test_dataloader:
+    for index, (images, targets) in enumerate(test_dataloader):
+        if index < 3:
+            continue
         B, C, H, W = images.shape
 
         images = images.to(device)
@@ -498,7 +500,7 @@ def test():
             cls_dets = np.hstack((boxes.cpu().numpy(),
                                   scores[:, np.newaxis])).astype(np.float32,
                                                                  copy=False)
-            TP = scores > 0.1
+            TP = scores > 0.5
             if boxes[TP].numel():
                 # TP_boxes.append(boxes[TP])
                 boxes_and_class = (boxes[TP], j)
