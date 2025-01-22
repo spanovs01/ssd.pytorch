@@ -92,9 +92,12 @@ class MultiBoxLoss(nn.Module):
         # Compute max conf across batch for hard negative mining
         batch_conf = conf_data.view(-1, self.num_classes)
         loss_c = log_sum_exp(batch_conf) - batch_conf.gather(1, conf_t.view(-1, 1))
-
+        '''
+        Torch API is different?
+        '''
         # Hard Negative Mining
-        loss_c[pos] = 0  # filter out pos boxes for now
+        pos_as_loss_c = pos.reshape(loss_c.shape)
+        loss_c[pos_as_loss_c] = 0  # filter out pos boxes for now
         loss_c = loss_c.view(num, -1)
         _, loss_idx = loss_c.sort(1, descending=True)
         _, idx_rank = loss_idx.sort(1)
